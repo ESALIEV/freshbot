@@ -1,5 +1,5 @@
 import aiosqlite
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from config import DATABASE_URL
 
 DB = DATABASE_URL
