@@ -36,7 +36,8 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 store_id INTEGER NOT NULL REFERENCES stores(id),
                 name TEXT NOT NULL,
-                category TEXT DEFAULT 'Общее'
+                category TEXT DEFAULT 'Общее',
+                article TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS batches (
@@ -138,10 +139,10 @@ async def get_store_members(store_id: int) -> list:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def add_product_batch(store_id: int, name: str, quantity: int, expiry_date: str) -> int:
+async def add_product_batch(store_id: int, name: str, quantity: int, expiry_date: str, article: str = "") -> int:
     async with aiosqlite.connect(DB) as db:
         cur = await db.execute(
-            "INSERT INTO products (store_id, name) VALUES (?, ?)", (store_id, name)
+            "INSERT INTO products (store_id, name, article) VALUES (?, ?, ?)", (store_id, name, article)
         )
         product_id = cur.lastrowid
         cur2 = await db.execute(
@@ -153,17 +154,22 @@ async def add_product_batch(store_id: int, name: str, quantity: int, expiry_date
         return batch_id
 
 
-async def get_store_products(store_id: int) -> list:
+async def get_store_products(store_id: int, search: str = "") -> list:
     async with aiosqlite.connect(DB) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("""
-            SELECT p.name, b.id as batch_id, b.quantity, b.expiry_date,
+        query = """
+            SELECT p.id as product_id, p.name, p.article, b.id as batch_id, b.quantity, b.expiry_date,
                    CAST(julianday(b.expiry_date) - julianday('now') AS INTEGER) as days_left
             FROM products p
             JOIN batches b ON b.product_id = p.id
             WHERE p.store_id = ?
-            ORDER BY b.expiry_date ASC
-        """, (store_id,)) as cur:
+        """
+        params = [store_id]
+        if search:
+            query += " AND (p.name LIKE ? OR p.article LIKE ?)"
+            params += [f"%{search}%", f"%{search}%"]
+        query += " ORDER BY b.expiry_date ASC"
+        async with db.execute(query, params) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
 
