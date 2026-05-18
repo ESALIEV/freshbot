@@ -1,11 +1,11 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from db.database import get_or_create_user, get_user_stores, use_invite_code
-from keyboards.main import main_menu_kb, stores_list_kb
+from keyboards.main import main_menu_kb
 
 router = Router()
 
@@ -21,7 +21,6 @@ async def cmd_start(message: Message, state: FSMContext):
         telegram_id=message.from_user.id,
         username=message.from_user.username
     )
-
     stores = await get_user_stores(user["id"])
 
     text = (
@@ -41,6 +40,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
 @router.message(Command("help"))
+@router.message(F.text == "❓ Помощь")
 async def cmd_help(message: Message):
     await message.answer(
         "📋 <b>Команды FreshBot</b>\n\n"
@@ -56,6 +56,7 @@ async def cmd_help(message: Message):
 
 
 @router.message(Command("join"))
+@router.message(F.text == "🔑 Войти по коду")
 async def cmd_join(message: Message, state: FSMContext):
     await state.set_state(JoinStoreState.waiting_for_code)
     await message.answer(
@@ -67,10 +68,10 @@ async def cmd_join(message: Message, state: FSMContext):
 async def process_invite_code(message: Message, state: FSMContext):
     code = message.text.strip()
     user = await get_or_create_user(message.from_user.id)
-    
+
     result = await use_invite_code(code, user["id"])
     await state.clear()
-    
+
     if result:
         await message.answer(
             f"✅ Вы успешно присоединились к магазину!\n"
