@@ -66,6 +66,10 @@ async def init_db():
                 used INTEGER NOT NULL DEFAULT 0
             );
         """)
+        try:
+            await db.execute("ALTER TABLE products ADD COLUMN article TEXT DEFAULT ''")
+        except Exception:
+            pass  # колонка уже есть
         await db.commit()
 
 
