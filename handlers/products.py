@@ -1,5 +1,5 @@
 from datetime import datetime
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -37,6 +37,7 @@ class AddProductState(StatesGroup):
 
 
 @router.message(Command("products"))
+@router.message(F.text == "📦 Товары")
 async def cmd_products(message: Message):
     user = await get_or_create_user(message.from_user.id)
     stores = await get_user_stores(user["id"])
@@ -82,6 +83,7 @@ async def cmd_products(message: Message):
 
 
 @router.message(Command("add"))
+@router.message(F.text == "➕ Добавить")
 async def cmd_add(message: Message, state: FSMContext):
     user = await get_or_create_user(message.from_user.id)
     stores = await get_user_stores(user["id"])
