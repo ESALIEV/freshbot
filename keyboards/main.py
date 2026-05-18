@@ -10,8 +10,8 @@ def main_menu_kb(stores: list = None) -> ReplyKeyboardMarkup:
     else:
         buttons.append([KeyboardButton(text="🏪 Создать магазин"), KeyboardButton(text="🔑 Войти по коду")])
 
-    buttons.append([KeyboardButton(text="❓ Помощь")])
-
+    buttons.append([KeyboardButton(text="📊 Статистика"), KeyboardButton(text="❓ Помощь")])
+    
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
