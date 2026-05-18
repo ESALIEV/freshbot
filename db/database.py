@@ -244,3 +244,40 @@ async def use_invite_code(code: str, user_id: int) -> dict | None:
             return invite
         except Exception:
             return None
+async def update_batch(batch_id: int, quantity: int, expiry_date: str):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute(
+            "UPDATE batches SET quantity = ?, expiry_date = ? WHERE id = ?",
+            (quantity, expiry_date, batch_id)
+        )
+        await db.commit()
+
+
+async def update_product_name(product_id: int, name: str):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute(
+            "UPDATE products SET name = ? WHERE id = ?",
+            (name, product_id)
+        )
+        await db.commit()
+
+
+async def delete_batch(batch_id: int):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("DELETE FROM notifications WHERE batch_id = ?", (batch_id,))
+        await db.execute("DELETE FROM batches WHERE id = ?", (batch_id,))
+        await db.commit()
+
+
+async def get_batch_by_id(batch_id: int) -> dict | None:
+    async with aiosqlite.connect(DB) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT b.id as batch_id, b.quantity, b.expiry_date, b.product_id,
+                   p.name as product_name
+            FROM batches b
+            JOIN products p ON p.id = b.product_id
+            WHERE b.id = ?
+        """, (batch_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
