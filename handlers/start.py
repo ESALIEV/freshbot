@@ -1,11 +1,11 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from db.database import get_or_create_user, get_user_stores, use_invite_code
-from keyboards.main import main_menu_kb
+from keyboards.main import main_menu_kb, stores_list_kb
 
 router = Router()
 
@@ -21,6 +21,7 @@ async def cmd_start(message: Message, state: FSMContext):
         telegram_id=message.from_user.id,
         username=message.from_user.username
     )
+
     stores = await get_user_stores(user["id"])
 
     text = (
@@ -39,8 +40,8 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=main_menu_kb(stores), parse_mode="HTML")
 
 
-@router.message(Command("help"))
 @router.message(F.text == "❓ Помощь")
+@router.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
         "📋 <b>Команды FreshBot</b>\n\n"
@@ -55,8 +56,8 @@ async def cmd_help(message: Message):
     )
 
 
-@router.message(Command("join"))
 @router.message(F.text == "🔑 Войти по коду")
+@router.message(Command("join"))
 async def cmd_join(message: Message, state: FSMContext):
     await state.set_state(JoinStoreState.waiting_for_code)
     await message.answer(
@@ -68,16 +69,17 @@ async def cmd_join(message: Message, state: FSMContext):
 async def process_invite_code(message: Message, state: FSMContext):
     code = message.text.strip()
     user = await get_or_create_user(message.from_user.id)
-
+    
     result = await use_invite_code(code, user["id"])
     await state.clear()
-
+    
     if result:
+        stores = await get_user_stores(user["id"])
         await message.answer(
             f"✅ Вы успешно присоединились к магазину!\n"
             f"Роль: <b>{result['role']}</b>\n\n"
-            f"Используйте /products для просмотра товаров.",
-            parse_mode="HTML"
+            "Используйте кнопку «📦 Товары» или команду /products.",
+            reply_markup=main_menu_kb(stores),
         )
     else:
         await message.answer(
