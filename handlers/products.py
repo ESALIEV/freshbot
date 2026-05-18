@@ -14,6 +14,8 @@ from db.database import (
 
 router = Router()
 
+PAGE_SIZE = 5
+
 EMOJI_STATUS = {
     "ok":      ("✅", "норма"),
     "warning": ("⚠️", "скоро истечёт"),
@@ -32,22 +34,94 @@ def get_status(days_left: int) -> tuple:
     return EMOJI_STATUS["ok"]
 
 
+def format_product(p: dict) -> str:
+    days = p["days_left"]
+    emoji, status = get_status(days)
+
+    if days < 0:
+        days_text = f"просрочен {abs(days)} дн. назад"
+    elif days == 0:
+        days_text = "истекает СЕГОДНЯ"
+    elif days == 1:
+        days_text = "завтра"
+    else:
+        days_text = f"через {days} дн."
+
+    article = f"\nАртикул: <code>{p['article']}</code>" if p.get("article") else ""
+    return (
+        f"{emoji} <b>{p['name']}</b>{article}\n"
+        f"Кол-во: {p['quantity']} шт.\n"
+        f"Срок: {p['expiry_date']} ({days_text})\n"
+        f"Статус: {status}"
+    )
+
+
 class AddProductState(StatesGroup):
     waiting_for_name = State()
+    waiting_for_article = State()
     waiting_for_expiry = State()
     waiting_for_qty = State()
 
 
 class EditProductState(StatesGroup):
-    waiting_for_field = State()
     waiting_for_new_name = State()
     waiting_for_new_expiry = State()
     waiting_for_new_qty = State()
 
 
+class SearchState(StatesGroup):
+    waiting_for_query = State()
+
+
+# ──── СПИСОК ТОВАРОВ С ПАГИНАЦИЕЙ ────
+
+async def show_products_page(message: Message, store_id: int, page: int = 0, search: str = ""):
+    products = await get_store_products(store_id, search)
+    total = len(products)
+
+    if not products:
+        text = "🔍 Ничего не найдено." if search else "Товаров пока нет. Добавьте первый: /add"
+        await message.answer(text)
+        return
+
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+    page_products = products[start:end]
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+
+    header = f"📦 Товары"
+    if search:
+        header += f" (поиск: «{search}»)"
+    header += f" — стр. {page + 1}/{total_pages} ({total} шт.)\n\n"
+
+    for p in page_products:
+        text = format_product(p)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✏️ Изменить", callback_data=f"edit:{p['batch_id']}")
+        builder.button(text="🗑️ Удалить", callback_data=f"delete:{p['batch_id']}")
+        builder.adjust(2)
+        await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+    # Навигация
+    nav = InlineKeyboardBuilder()
+    if page > 0:
+        nav.button(text="⬅️ Назад", callback_data=f"page:{page-1}:{search}")
+    if end < total:
+        nav.button(text="➡️ Вперёд", callback_data=f"page:{page+1}:{search}")
+    nav.button(text="🔍 Поиск", callback_data="search_start")
+    nav.adjust(2)
+
+    await message.answer(
+        f"_{page + 1} из {total_pages} страниц_",
+        reply_markup=nav.as_markup(),
+        parse_mode="Markdown"
+    )
+
+
 @router.message(Command("products"))
 @router.message(F.text == "📦 Товары")
-async def cmd_products(message: Message):
+async def cmd_products(message: Message, state: FSMContext):
+    await state.clear()
     user = await get_or_create_user(message.from_user.id)
     stores = await get_user_stores(user["id"])
 
@@ -56,45 +130,62 @@ async def cmd_products(message: Message):
         return
 
     store = stores[0]
-    products = await get_store_products(store["id"])
+    await state.update_data(store_id=store["id"])
+    await show_products_page(message, store["id"], page=0)
 
-    if not products:
-        await message.answer(
-            f"📦 Магазин <b>{store['name']}</b>\n\n"
-            "Товаров пока нет. Добавьте первый: /add",
-            parse_mode="HTML"
-        )
+
+@router.callback_query(F.data.startswith("page:"))
+async def cb_page(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":", 2)
+    page = int(parts[1])
+    search = parts[2] if len(parts) > 2 else ""
+
+    data = await state.get_data()
+    store_id = data.get("store_id")
+
+    if not store_id:
+        user = await get_or_create_user(callback.from_user.id)
+        stores = await get_user_stores(user["id"])
+        store_id = stores[0]["id"] if stores else None
+
+    if not store_id:
+        await callback.answer("Ошибка", show_alert=True)
         return
 
-    await message.answer(f"📦 <b>{store['name']}</b> — товары:", parse_mode="HTML")
+    await show_products_page(callback.message, store_id, page=page, search=search)
+    await callback.answer()
 
-    for p in products:
-        days = p["days_left"]
-        emoji, status = get_status(days)
 
-        if days < 0:
-            days_text = f"просрочен {abs(days)} дн. назад"
-        elif days == 0:
-            days_text = "истекает СЕГОДНЯ"
-        elif days == 1:
-            days_text = "завтра"
-        else:
-            days_text = f"через {days} дн."
+# ──── ПОИСК ────
 
-        text = (
-            f"{emoji} <b>{p['name']}</b>\n"
-            f"Кол-во: {p['quantity']} шт.\n"
-            f"Срок: {p['expiry_date']} ({days_text})\n"
-            f"Статус: {status}"
-        )
+@router.callback_query(F.data == "search_start")
+async def cb_search_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SearchState.waiting_for_query)
+    await callback.message.answer("🔍 Введите название или артикул для поиска:")
+    await callback.answer()
 
-        # Кнопки под каждым товаром
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✏️ Изменить", callback_data=f"edit:{p['batch_id']}")
-        builder.button(text="🗑️ Удалить", callback_data=f"delete:{p['batch_id']}")
-        builder.adjust(2)
 
-        await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+@router.message(Command("search"))
+async def cmd_search(message: Message, state: FSMContext):
+    await state.set_state(SearchState.waiting_for_query)
+    await message.answer("🔍 Введите название или артикул для поиска:")
+
+
+@router.message(SearchState.waiting_for_query)
+async def process_search(message: Message, state: FSMContext):
+    query = message.text.strip()
+    await state.clear()
+
+    user = await get_or_create_user(message.from_user.id)
+    stores = await get_user_stores(user["id"])
+
+    if not stores:
+        await message.answer("У вас нет магазинов.")
+        return
+
+    store_id = stores[0]["id"]
+    await state.update_data(store_id=store_id)
+    await show_products_page(message, store_id, page=0, search=query)
 
 
 # ──── УДАЛЕНИЕ ────
@@ -114,7 +205,7 @@ async def cb_delete_confirm(callback: CallbackQuery):
     builder.adjust(2)
 
     await callback.message.edit_text(
-        f"🗑️ Удалить товар <b>{batch['product_name']}</b>?\n"
+        f"🗑️ Удалить <b>{batch['product_name']}</b>?\n"
         f"Кол-во: {batch['quantity']} шт.\n"
         f"Срок: {batch['expiry_date']}",
         reply_markup=builder.as_markup(),
@@ -161,8 +252,7 @@ async def cb_edit_menu(callback: CallbackQuery, state: FSMContext):
     builder.adjust(2)
 
     await callback.message.edit_text(
-        f"✏️ Редактирование <b>{batch['product_name']}</b>\n\n"
-        f"Что изменить?",
+        f"✏️ Редактирование <b>{batch['product_name']}</b>\n\nЧто изменить?",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
@@ -272,12 +362,35 @@ async def process_product_name(message: Message, state: FSMContext):
         return
 
     await state.update_data(product_name=name)
+    await state.set_state(AddProductState.waiting_for_article)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⏭️ Пропустить", callback_data="skip_article")
+
+    await message.answer(
+        "Введите артикул товара (или пропустите):",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data == "skip_article")
+async def cb_skip_article(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(article="")
+    await state.set_state(AddProductState.waiting_for_expiry)
+    await callback.message.edit_text(
+        "📅 Введите срок годности в формате ДД.ММ.ГГГГ\n"
+        "Например: 15.06.2025"
+    )
+    await callback.answer()
+
+
+@router.message(AddProductState.waiting_for_article)
+async def process_article(message: Message, state: FSMContext):
+    await state.update_data(article=message.text.strip())
     await state.set_state(AddProductState.waiting_for_expiry)
     await message.answer(
-        f"Товар: <b>{name}</b>\n\n"
-        "Введите срок годности в формате ДД.ММ.ГГГГ\n"
-        "Например: 15.06.2025",
-        parse_mode="HTML"
+        "📅 Введите срок годности в формате ДД.ММ.ГГГГ\n"
+        "Например: 15.06.2025"
     )
 
 
@@ -320,20 +433,21 @@ async def process_quantity(message: Message, state: FSMContext):
         store_id=data["store_id"],
         name=data["product_name"],
         quantity=qty,
-        expiry_date=data["expiry_date"]
+        expiry_date=data["expiry_date"],
+        article=data.get("article", "")
     )
 
     await create_notifications_for_batch(batch_id, data["expiry_date"])
 
     expiry_display = datetime.strptime(data["expiry_date"], "%Y-%m-%d").strftime("%d.%m.%Y")
     days_left = (datetime.strptime(data["expiry_date"], "%Y-%m-%d") - datetime.now()).days
+    article_text = f"\nАртикул: <code>{data['article']}</code>" if data.get("article") else ""
 
     await message.answer(
         f"✅ Товар добавлен!\n\n"
-        f"📦 <b>{data['product_name']}</b>\n"
+        f"📦 <b>{data['product_name']}</b>{article_text}\n"
         f"Кол-во: {qty} шт.\n"
         f"Срок годности: {expiry_display}\n"
-        f"Осталось дней: {days_left}\n\n"
-        f"Уведомления запланированы за 3 дня, 1 день и в день истечения.",
+        f"Осталось дней: {days_left}",
         parse_mode="HTML"
     )
