@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -17,6 +17,7 @@ class NewStoreState(StatesGroup):
 
 
 @router.message(Command("newstore"))
+@router.message(F.text == "🏪 Создать магазин")
 async def cmd_new_store(message: Message, state: FSMContext):
     await state.set_state(NewStoreState.waiting_for_name)
     await message.answer(
@@ -35,15 +36,20 @@ async def process_store_name(message: Message, state: FSMContext):
     store = await create_store(name, user["id"])
     await state.clear()
 
+    stores = await get_user_stores(user["id"])
+    from keyboards.main import main_menu_kb
+
     await message.answer(
         f"✅ Магазин <b>{store['name']}</b> создан!\n\n"
         f"Вы — администратор. Пригласите сотрудников командой /invite\n"
         f"Добавьте первый товар командой /add",
+        reply_markup=main_menu_kb(stores),
         parse_mode="HTML"
     )
 
 
 @router.message(Command("mystores"))
+@router.message(F.text == "🏪 Мои магазины")
 async def cmd_my_stores(message: Message):
     user = await get_or_create_user(message.from_user.id)
     stores = await get_user_stores(user["id"])
@@ -65,6 +71,7 @@ async def cmd_my_stores(message: Message):
 
 
 @router.message(Command("invite"))
+@router.message(F.text == "🔗 Пригласить")
 async def cmd_invite(message: Message):
     user = await get_or_create_user(message.from_user.id)
     stores = await get_user_stores(user["id"])
