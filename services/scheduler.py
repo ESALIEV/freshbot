@@ -15,8 +15,9 @@ NOTIF_TEMPLATES = {
 
 
 async def send_notifications(bot: Bot):
+    """Проверяем и отправляем все накопившиеся уведомления"""
     notifications = await get_pending_notifications()
-
+    
     if not notifications:
         return
 
@@ -31,6 +32,7 @@ async def send_notifications(bot: Bot):
             f"Количество: {notif['quantity']} шт."
         )
 
+        # Отправляем всем сотрудникам магазина
         members = await get_store_members(notif["store_id"])
         for member in members:
             try:
@@ -47,7 +49,8 @@ async def send_notifications(bot: Bot):
 
 async def start_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
-
+    
+    # Проверяем уведомления каждый час
     scheduler.add_job(
         send_notifications,
         trigger="interval",
@@ -55,13 +58,14 @@ async def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         kwargs={"bot": bot},
         id="check_notifications"
     )
-
+    
+    # И сразу при старте
     scheduler.add_job(
         send_notifications,
         trigger="date",
         kwargs={"bot": bot},
         id="check_on_start"
     )
-
+    
     scheduler.start()
     return scheduler
