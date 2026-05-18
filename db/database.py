@@ -320,3 +320,48 @@ async def use_invite_code(code: str, user_id: int) -> dict | None:
         return invite
     except Exception:
         return None
+
+async def get_store_stats(store_id: int) -> dict:
+    db = await get_db()
+    today = date.today().strftime("%Y-%m-%d")
+    async with db.execute("""
+        SELECT
+            COUNT(*)                                                                     AS total,
+            SUM(CASE WHEN b.expiry_date < ?                              THEN 1 ELSE 0 END) AS expired,
+            SUM(CASE WHEN b.expiry_date >= ?
+                      AND julianday(b.expiry_date) - julianday(?) <= 3   THEN 1 ELSE 0 END) AS expires_3d,
+            SUM(CASE WHEN strftime('%Y-%m', b.expiry_date) = strftime('%Y-%m', ?)
+                                                                         THEN 1 ELSE 0 END) AS expires_this_month,
+            SUM(b.quantity)                                                              AS total_qty
+        FROM products p
+        JOIN batches b ON b.product_id = p.id
+        WHERE p.store_id = ?
+    """, (today, today, today, today, store_id)) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else {}
+
+
+async def get_store_products_filtered(store_id: int, status_filter: str = "") -> list:
+    db = await get_db()
+    today = date.today().strftime("%Y-%m-%d")
+    base = """
+        SELECT p.id as product_id, p.name, p.article,
+               b.id as batch_id, b.quantity, b.expiry_date,
+               CAST(julianday(b.expiry_date) - julianday('now') AS INTEGER) as days_left
+        FROM products p
+        JOIN batches b ON b.product_id = p.id
+        WHERE p.store_id = ?
+    """
+    params: list = [store_id]
+    if status_filter == "expired":
+        base += " AND b.expiry_date < ?"
+        params.append(today)
+    elif status_filter == "warning":
+        base += " AND b.expiry_date >= ? AND julianday(b.expiry_date) - julianday(?) <= 3"
+        params += [today, today]
+    elif status_filter == "month":
+        base += " AND strftime('%Y-%m', b.expiry_date) = strftime('%Y-%m', ?)"
+        params.append(today)
+    base += " ORDER BY b.expiry_date ASC"
+    async with db.execute(base, params) as cur:
+        return [dict(r) for r in await cur.fetchall()]
