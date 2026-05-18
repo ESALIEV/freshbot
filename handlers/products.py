@@ -1,13 +1,15 @@
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from db.database import (
     get_or_create_user, get_user_stores, add_product_batch,
-    create_notifications_for_batch, get_store_products
+    create_notifications_for_batch, get_store_products,
+    delete_batch, get_batch_by_id, update_batch, update_product_name
 )
 
 router = Router()
@@ -36,6 +38,13 @@ class AddProductState(StatesGroup):
     waiting_for_qty = State()
 
 
+class EditProductState(StatesGroup):
+    waiting_for_field = State()
+    waiting_for_new_name = State()
+    waiting_for_new_expiry = State()
+    waiting_for_new_qty = State()
+
+
 @router.message(Command("products"))
 @router.message(F.text == "📦 Товары")
 async def cmd_products(message: Message):
@@ -57,7 +66,7 @@ async def cmd_products(message: Message):
         )
         return
 
-    text = f"📦 <b>{store['name']}</b> — товары:\n\n"
+    await message.answer(f"📦 <b>{store['name']}</b> — товары:", parse_mode="HTML")
 
     for p in products:
         days = p["days_left"]
@@ -72,15 +81,169 @@ async def cmd_products(message: Message):
         else:
             days_text = f"через {days} дн."
 
-        text += (
+        text = (
             f"{emoji} <b>{p['name']}</b>\n"
-            f"   Кол-во: {p['quantity']} шт.\n"
-            f"   Срок: {p['expiry_date']} ({days_text})\n"
-            f"   Статус: {status}\n\n"
+            f"Кол-во: {p['quantity']} шт.\n"
+            f"Срок: {p['expiry_date']} ({days_text})\n"
+            f"Статус: {status}"
         )
 
-    await message.answer(text, parse_mode="HTML")
+        # Кнопки под каждым товаром
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✏️ Изменить", callback_data=f"edit:{p['batch_id']}")
+        builder.button(text="🗑️ Удалить", callback_data=f"delete:{p['batch_id']}")
+        builder.adjust(2)
 
+        await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+
+# ──── УДАЛЕНИЕ ────
+
+@router.callback_query(F.data.startswith("delete:"))
+async def cb_delete_confirm(callback: CallbackQuery):
+    batch_id = int(callback.data.split(":")[1])
+    batch = await get_batch_by_id(batch_id)
+
+    if not batch:
+        await callback.answer("Товар не найден", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data=f"delete_confirm:{batch_id}")
+    builder.button(text="❌ Отмена", callback_data="delete_cancel")
+    builder.adjust(2)
+
+    await callback.message.edit_text(
+        f"🗑️ Удалить товар <b>{batch['product_name']}</b>?\n"
+        f"Кол-во: {batch['quantity']} шт.\n"
+        f"Срок: {batch['expiry_date']}",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_confirm:"))
+async def cb_delete_execute(callback: CallbackQuery):
+    batch_id = int(callback.data.split(":")[1])
+    batch = await get_batch_by_id(batch_id)
+    name = batch["product_name"] if batch else "Товар"
+
+    await delete_batch(batch_id)
+    await callback.message.edit_text(f"🗑️ <b>{name}</b> удалён.", parse_mode="HTML")
+    await callback.answer("Удалено!")
+
+
+@router.callback_query(F.data == "delete_cancel")
+async def cb_delete_cancel(callback: CallbackQuery):
+    await callback.message.edit_text("❌ Удаление отменено.")
+    await callback.answer()
+
+
+# ──── РЕДАКТИРОВАНИЕ ────
+
+@router.callback_query(F.data.startswith("edit:"))
+async def cb_edit_menu(callback: CallbackQuery, state: FSMContext):
+    batch_id = int(callback.data.split(":")[1])
+    batch = await get_batch_by_id(batch_id)
+
+    if not batch:
+        await callback.answer("Товар не найден", show_alert=True)
+        return
+
+    await state.update_data(batch_id=batch_id, product_id=batch["product_id"])
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 Название", callback_data="edit_field:name")
+    builder.button(text="📅 Дата", callback_data="edit_field:expiry")
+    builder.button(text="📦 Количество", callback_data="edit_field:qty")
+    builder.button(text="❌ Отмена", callback_data="edit_cancel")
+    builder.adjust(2)
+
+    await callback.message.edit_text(
+        f"✏️ Редактирование <b>{batch['product_name']}</b>\n\n"
+        f"Что изменить?",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "edit_field:name")
+async def cb_edit_name(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditProductState.waiting_for_new_name)
+    await callback.message.edit_text("📝 Введите новое название товара:")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "edit_field:expiry")
+async def cb_edit_expiry(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditProductState.waiting_for_new_expiry)
+    await callback.message.edit_text("📅 Введите новую дату в формате ДД.ММ.ГГГГ:")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "edit_field:qty")
+async def cb_edit_qty(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditProductState.waiting_for_new_qty)
+    await callback.message.edit_text("📦 Введите новое количество (штук):")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "edit_cancel")
+async def cb_edit_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Редактирование отменено.")
+    await callback.answer()
+
+
+@router.message(EditProductState.waiting_for_new_name)
+async def process_new_name(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await update_product_name(data["product_id"], message.text.strip())
+    await state.clear()
+    await message.answer("✅ Название обновлено!")
+
+
+@router.message(EditProductState.waiting_for_new_expiry)
+async def process_new_expiry(message: Message, state: FSMContext):
+    text = message.text.strip()
+    for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"]:
+        try:
+            date = datetime.strptime(text, fmt)
+            expiry_str = date.strftime("%Y-%m-%d")
+            break
+        except ValueError:
+            continue
+    else:
+        await message.answer("❌ Неверный формат. Введите дату как ДД.ММ.ГГГГ")
+        return
+
+    data = await state.get_data()
+    batch = await get_batch_by_id(data["batch_id"])
+    await update_batch(data["batch_id"], batch["quantity"], expiry_str)
+    await state.clear()
+    await message.answer("✅ Дата обновлена!")
+
+
+@router.message(EditProductState.waiting_for_new_qty)
+async def process_new_qty(message: Message, state: FSMContext):
+    try:
+        qty = int(message.text.strip())
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите целое число больше 0:")
+        return
+
+    data = await state.get_data()
+    batch = await get_batch_by_id(data["batch_id"])
+    await update_batch(data["batch_id"], qty, batch["expiry_date"])
+    await state.clear()
+    await message.answer("✅ Количество обновлено!")
+
+
+# ──── ДОБАВЛЕНИЕ ────
 
 @router.message(Command("add"))
 @router.message(F.text == "➕ Добавить")
@@ -121,7 +284,6 @@ async def process_product_name(message: Message, state: FSMContext):
 @router.message(AddProductState.waiting_for_expiry)
 async def process_expiry_date(message: Message, state: FSMContext):
     text = message.text.strip()
-
     for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"]:
         try:
             date = datetime.strptime(text, fmt)
