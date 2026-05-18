@@ -1,0 +1,85 @@
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+from db.database import get_or_create_user, get_user_stores, use_invite_code
+from keyboards.main import main_menu_kb, stores_list_kb
+
+router = Router()
+
+
+class JoinStoreState(StatesGroup):
+    waiting_for_code = State()
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    user = await get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username
+    )
+
+    stores = await get_user_stores(user["id"])
+
+    text = (
+        "🌿 <b>FreshBot</b> — контроль сроков годности\n\n"
+        f"Привет, <b>{message.from_user.first_name}</b>!\n"
+    )
+
+    if stores:
+        text += f"Ваши магазины ({len(stores)}):\n"
+        for s in stores:
+            text += f"  • {s['name']} [{s['role']}]\n"
+        text += "\nВыберите действие:"
+    else:
+        text += "У вас пока нет магазинов. Создайте первый или присоединитесь по коду."
+
+    await message.answer(text, reply_markup=main_menu_kb(stores), parse_mode="HTML")
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(
+        "📋 <b>Команды FreshBot</b>\n\n"
+        "/start — главное меню\n"
+        "/newstore — создать магазин\n"
+        "/join — войти по invite-коду\n"
+        "/products — список товаров\n"
+        "/add — добавить товар\n"
+        "/invite — создать приглашение\n"
+        "/help — эта справка",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("join"))
+async def cmd_join(message: Message, state: FSMContext):
+    await state.set_state(JoinStoreState.waiting_for_code)
+    await message.answer(
+        "🔗 Введите invite-код для присоединения к магазину:"
+    )
+
+
+@router.message(JoinStoreState.waiting_for_code)
+async def process_invite_code(message: Message, state: FSMContext):
+    code = message.text.strip()
+    user = await get_or_create_user(message.from_user.id)
+    
+    result = await use_invite_code(code, user["id"])
+    await state.clear()
+    
+    if result:
+        await message.answer(
+            f"✅ Вы успешно присоединились к магазину!\n"
+            f"Роль: <b>{result['role']}</b>\n\n"
+            f"Используйте /products для просмотра товаров.",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "❌ Код недействителен или уже использован.\n"
+            "Попросите администратора сгенерировать новый."
+        )
