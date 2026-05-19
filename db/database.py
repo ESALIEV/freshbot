@@ -1,5 +1,7 @@
 import asyncpg
 import secrets
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, date
 from config import DATABASE_URL
 
