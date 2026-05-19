@@ -1,11 +1,11 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from db.database import get_or_create_user, get_user_stores, use_invite_code
-from keyboards.main import main_menu_kb, stores_list_kb
+from keyboards.main import main_menu_kb
 
 router = Router()
 
@@ -21,21 +21,34 @@ async def cmd_start(message: Message, state: FSMContext):
         telegram_id=message.from_user.id,
         username=message.from_user.username
     )
-
     stores = await get_user_stores(user["id"])
+    name = message.from_user.first_name
 
-    text = (
-        "🌿 <b>FreshBot</b> — контроль сроков годности\n\n"
-        f"Привет, <b>{message.from_user.first_name}</b>!\n"
-    )
-
-    if stores:
-        text += f"Ваши магазины ({len(stores)}):\n"
-        for s in stores:
-            text += f"  • {s['name']} [{s['role']}]\n"
-        text += "\nВыберите действие:"
+    if not stores:
+        text = (
+            f"🌿 <b>Добро пожаловать в FreshBot!</b>\n\n"
+            f"Привет, <b>{name}</b>! 👋\n\n"
+            f"Я помогу вам контролировать сроки годности товаров "
+            f"и никогда не забывать о просроченной продукции.\n\n"
+            f"<b>Что я умею:</b>\n"
+            f"📦 Вести список товаров с датами\n"
+            f"🔔 Напоминать за 3 дня, 1 день и в день истечения\n"
+            f"👥 Работать с командой сотрудников\n"
+            f"📊 Показывать статистику и экспортировать отчёты\n\n"
+            f"<b>Чтобы начать:</b>\n"
+            f"➡️ Создайте свой магазин — кнопка ниже\n"
+            f"➡️ Или войдите по invite-коду от администратора"
+        )
     else:
-        text += "У вас пока нет магазинов. Создайте первый или присоединитесь по коду."
+        text = (
+            f"🌿 <b>FreshBot</b>\n\n"
+            f"С возвращением, <b>{name}</b>! 👋\n\n"
+        )
+        text += f"🏪 Ваши магазины ({len(stores)}):\n"
+        for s in stores:
+            role_emoji = "👑" if s["role"] == "admin" else "👷"
+            text += f"  {role_emoji} {s['name']}\n"
+        text += "\nВыберите действие в меню ниже 👇"
 
     await message.answer(text, reply_markup=main_menu_kb(stores), parse_mode="HTML")
 
@@ -48,9 +61,14 @@ async def cmd_help(message: Message):
         "/start — главное меню\n"
         "/newstore — создать магазин\n"
         "/join — войти по invite-коду\n"
+        "/leave — покинуть магазин\n"
         "/products — список товаров\n"
         "/add — добавить товар\n"
         "/invite — создать приглашение\n"
+        "/members — сотрудники магазина\n"
+        "/kick — исключить сотрудника\n"
+        "/rename — переименовать магазин\n"
+        "/stats — статистика\n"
         "/help — эта справка",
         parse_mode="HTML"
     )
@@ -69,10 +87,10 @@ async def cmd_join(message: Message, state: FSMContext):
 async def process_invite_code(message: Message, state: FSMContext):
     code = message.text.strip()
     user = await get_or_create_user(message.from_user.id)
-    
+
     result = await use_invite_code(code, user["id"])
     await state.clear()
-    
+
     if result:
         stores = await get_user_stores(user["id"])
         await message.answer(
@@ -80,6 +98,7 @@ async def process_invite_code(message: Message, state: FSMContext):
             f"Роль: <b>{result['role']}</b>\n\n"
             "Используйте кнопку «📦 Товары» или команду /products.",
             reply_markup=main_menu_kb(stores),
+            parse_mode="HTML"
         )
     else:
         await message.answer(
