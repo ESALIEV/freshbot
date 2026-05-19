@@ -101,19 +101,18 @@ async def show_products_page(message: Message, store_id: int, page: int = 0, sea
         await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
     nav = InlineKeyboardBuilder()
-if page > 0:
-    nav.button(text="⬅️ Назад", callback_data=f"page:{page-1}:{store_id}:{search}")
-if end < total:
-    nav.button(text="➡️ Вперёд", callback_data=f"page:{page+1}:{store_id}:{search}")
-nav.button(text="🔍 Поиск", callback_data=f"search_start:{store_id}")
-nav.button(text="📄 Перейти на стр.", callback_data=f"goto_page:{store_id}:{search}")
-nav.adjust(2)
-await message.answer(
-    f"_{page + 1} из {total_pages} страниц_",
-    reply_markup=nav.as_markup(),
-    parse_mode="Markdown"
-)
-
+    if page > 0:
+        nav.button(text="⬅️ Назад", callback_data=f"page:{page-1}:{store_id}:{search}")
+    if end < total:
+        nav.button(text="➡️ Вперёд", callback_data=f"page:{page+1}:{store_id}:{search}")
+    nav.button(text="🔍 Поиск", callback_data=f"search_start:{store_id}")
+    nav.button(text="📄 Перейти на стр.", callback_data=f"goto_page:{store_id}:{search}")
+    nav.adjust(2)
+    await message.answer(
+        f"_{page + 1} из {total_pages} страниц_",
+        reply_markup=nav.as_markup(),
+        parse_mode="Markdown"
+    )
 
 class AddProductState(StatesGroup):
     waiting_for_name = State()
