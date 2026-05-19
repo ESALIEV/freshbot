@@ -338,3 +338,23 @@ async def get_store_products_filtered(store_id: int, status_filter: str = "") ->
         base += " ORDER BY b.expiry_date ASC"
         rows = await db.fetch(base, store_id)
         return [dict(r) for r in rows]
+async def rename_store(store_id: int, new_name: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE stores SET name = $1 WHERE id = $2",
+            new_name, store_id
+        )
+
+
+async def kick_member(store_id: int, telegram_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        user = await db.fetchrow(
+            "SELECT id FROM users WHERE telegram_id = $1", telegram_id
+        )
+        if user:
+            await db.execute(
+                "DELETE FROM store_members WHERE store_id = $1 AND user_id = $2",
+                store_id, user["id"]
+            )
