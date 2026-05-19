@@ -361,3 +361,13 @@ async def kick_member(store_id: int, telegram_id: int):
                 "DELETE FROM store_members WHERE store_id = $1 AND user_id = $2",
                 store_id, user["id"]
             )
+async def update_product_name(product_id: int, name: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute("UPDATE products SET name = $1 WHERE id = $2", name, product_id)
+
+
+async def update_product_article(product_id: int, article: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute("UPDATE products SET article = $1 WHERE id = $2", article, product_id)
