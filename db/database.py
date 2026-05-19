@@ -233,11 +233,13 @@ async def create_notifications_for_batch(batch_id: int, expiry_date: str):
     pool = await get_pool()
     async with pool.acquire() as db:
         for ntype, notify_at in notify_schedule:
-            if notify_at > datetime.now():
-                await db.execute(
-                    "INSERT INTO notifications (batch_id, notify_at, type) VALUES ($1, $2, $3)",
-                    batch_id, notify_at, ntype
-                )
+            # Устанавливаем время на 9:00 утра по UTC (14:00 по UTC+5)
+            notify_at = notify_at.replace(hour=9, minute=0, second=0)
+            await db.execute(
+                "INSERT INTO notifications (batch_id, notify_at, type) VALUES ($1, $2, $3)",
+                batch_id, notify_at, ntype
+            )
+    logger.info(f"Created {len(notify_schedule)} notifications for batch {batch_id}")
 
 
 async def get_pending_notifications() -> list:
