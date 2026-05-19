@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
-from db.database import init_db, close_db
+from db.database import init_db
 from handlers.start import router as start_router
 from handlers.store import router as store_router
 from handlers.products import router as products_router
