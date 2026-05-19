@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
@@ -10,7 +10,7 @@ from db.database import (
     get_or_create_user, get_user_stores, add_product_batch,
     create_notifications_for_batch, get_store_products,
     delete_batch, get_batch_by_id, update_batch, update_product_name,
-    get_member_role
+    update_product_article, get_member_role  # Добавлен импорт update_product_article
 )
 
 router = Router()
@@ -55,7 +55,7 @@ def format_product(p: dict) -> str:
     )
 
 
-# ──── ВСПОМОГАТЕЛЬНАЯ: выбор магазина (пункт 2) ────
+# ──── ВСПОМОГАТЕЛЬНАЯ: выбор магазина ────
 
 async def ask_select_store(message: Message, stores: list, action: str):
     """Показывает кнопки выбора магазина. action — префикс callback_data."""
@@ -123,6 +123,7 @@ class AddProductState(StatesGroup):
 
 class EditProductState(StatesGroup):
     waiting_for_new_name = State()
+    waiting_for_new_article = State()  # Добавлено состояние
     waiting_for_new_expiry = State()
     waiting_for_new_qty = State()
 
@@ -131,7 +132,7 @@ class SearchState(StatesGroup):
     waiting_for_query = State()
 
 
-# ──── /products — выбор магазина если несколько (пункт 2) ────
+# ──── /products — выбор магазина если несколько ────
 
 @router.message(Command("products"))
 @router.message(F.text == "📦 Товары")
@@ -157,7 +158,6 @@ async def cb_select_store_products(callback: CallbackQuery, state: FSMContext):
     store_id = int(callback.data.split(":")[1])
     user = await get_or_create_user(callback.from_user.id)
 
-    # пункт 4: проверка членства
     role = await get_member_role(user["id"], store_id)
     if not role:
         await callback.answer("❌ Нет доступа к этому магазину", show_alert=True)
@@ -224,7 +224,7 @@ async def process_search(message: Message, state: FSMContext):
     await show_products_page(message, store_id, page=0, search=query)
 
 
-# ──── УДАЛЕНИЕ (пункт 4: проверка прав) ────
+# ──── УДАЛЕНИЕ ────
 
 @router.callback_query(F.data.startswith("delete:"))
 async def cb_delete_confirm(callback: CallbackQuery):
@@ -235,7 +235,6 @@ async def cb_delete_confirm(callback: CallbackQuery):
         await callback.answer("Товар не найден", show_alert=True)
         return
 
-    # пункт 4: проверяем что пользователь — член магазина
     user = await get_or_create_user(callback.from_user.id)
     role = await get_member_role(user["id"], batch["store_id"])
     if not role:
@@ -266,7 +265,6 @@ async def cb_delete_execute(callback: CallbackQuery):
         await callback.answer("Товар уже удалён", show_alert=True)
         return
 
-    # пункт 4: повторная проверка прав перед исполнением
     user = await get_or_create_user(callback.from_user.id)
     role = await get_member_role(user["id"], batch["store_id"])
     if not role:
@@ -285,7 +283,7 @@ async def cb_delete_cancel(callback: CallbackQuery):
     await callback.answer()
 
 
-# ──── РЕДАКТИРОВАНИЕ (пункт 4: проверка прав) ────
+# ──── РЕДАКТИРОВАНИЕ ────
 
 @router.callback_query(F.data.startswith("edit:"))
 async def cb_edit_menu(callback: CallbackQuery, state: FSMContext):
@@ -296,7 +294,6 @@ async def cb_edit_menu(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Товар не найден", show_alert=True)
         return
 
-    # пункт 4: проверка членства
     user = await get_or_create_user(callback.from_user.id)
     role = await get_member_role(user["id"], batch["store_id"])
     if not role:
@@ -306,10 +303,11 @@ async def cb_edit_menu(callback: CallbackQuery, state: FSMContext):
     await state.update_data(batch_id=batch_id, product_id=batch["product_id"])
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="📝 Название", callback_data="edit_field:name")
-    builder.button(text="📅 Дата", callback_data="edit_field:expiry")
+    builder.button(text="📝 Название",   callback_data="edit_field:name")
+    builder.button(text="🏷️ Артикул",   callback_data="edit_field:article")  # Изменен callback_data на общий стиль
+    builder.button(text="📅 Дата",       callback_data="edit_field:expiry")
     builder.button(text="📦 Количество", callback_data="edit_field:qty")
-    builder.button(text="❌ Отмена", callback_data="edit_cancel")
+    builder.button(text="❌ Отмена",     callback_data="edit_cancel")
     builder.adjust(2)
 
     await callback.message.edit_text(
@@ -324,6 +322,13 @@ async def cb_edit_menu(callback: CallbackQuery, state: FSMContext):
 async def cb_edit_name(callback: CallbackQuery, state: FSMContext):
     await state.set_state(EditProductState.waiting_for_new_name)
     await callback.message.edit_text("📝 Введите новое название товара:")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "edit_field:article")
+async def cb_edit_article(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditProductState.waiting_for_new_article)
+    await callback.message.edit_text("🏷️ Введите новый артикул товара:")
     await callback.answer()
 
 
@@ -356,13 +361,21 @@ async def process_new_name(message: Message, state: FSMContext):
     await message.answer("✅ Название обновлено!")
 
 
+@router.message(EditProductState.waiting_for_new_article)
+async def process_new_article(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await update_product_article(data["product_id"], message.text.strip())
+    await state.clear()
+    await message.answer("✅ Артикул обновлён!")
+
+
 @router.message(EditProductState.waiting_for_new_expiry)
 async def process_new_expiry(message: Message, state: FSMContext):
     text = message.text.strip()
     for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"]:
         try:
-            date = datetime.strptime(text, fmt)
-            expiry_str = date.strftime("%Y-%m-%d")
+            date_obj = datetime.strptime(text, fmt)
+            expiry_str = date_obj.strftime("%Y-%m-%d")
             break
         except ValueError:
             continue
@@ -372,7 +385,6 @@ async def process_new_expiry(message: Message, state: FSMContext):
 
     data = await state.get_data()
     batch = await get_batch_by_id(data["batch_id"])
-    # update_batch теперь сам пересчитывает уведомления (пункт 5)
     await update_batch(data["batch_id"], batch["quantity"], expiry_str)
     await state.clear()
     await message.answer("✅ Дата обновлена!")
@@ -395,7 +407,7 @@ async def process_new_qty(message: Message, state: FSMContext):
     await message.answer("✅ Количество обновлено!")
 
 
-# ──── ДОБАВЛЕНИЕ (пункт 2: выбор магазина) ────
+# ──── ДОБАВЛЕНИЕ ────
 
 @router.message(Command("add"))
 @router.message(F.text == "➕ Добавить")
@@ -423,7 +435,6 @@ async def cb_select_store_add(callback: CallbackQuery, state: FSMContext):
     store_id = int(callback.data.split(":")[1])
     user = await get_or_create_user(callback.from_user.id)
 
-    # пункт 4: проверка членства
     role = await get_member_role(user["id"], store_id)
     if not role:
         await callback.answer("❌ Нет доступа к этому магазину", show_alert=True)
@@ -477,8 +488,8 @@ async def process_expiry_date(message: Message, state: FSMContext):
     text = message.text.strip()
     for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"]:
         try:
-            date = datetime.strptime(text, fmt)
-            expiry_str = date.strftime("%Y-%m-%d")
+            date_obj = datetime.strptime(text, fmt)
+            expiry_str = date_obj.strftime("%Y-%m-%d")
             break
         except ValueError:
             continue
@@ -510,10 +521,14 @@ async def process_quantity(message: Message, state: FSMContext):
         expiry_date=data["expiry_date"],
         article=data.get("article", "")
     )
+
     await create_notifications_for_batch(batch_id, data["expiry_date"])
 
-    expiry_display = datetime.strptime(data["expiry_date"], "%Y-%m-%d").strftime("%d.%m.%Y")
-    days_left = (datetime.strptime(data["expiry_date"], "%Y-%m-%d") - datetime.now()).days
+    expiry_dt = datetime.strptime(data["expiry_date"], "%Y-%m-%d")
+    expiry_display = expiry_dt.strftime("%d.%m.%Y")
+    
+    # Исправлено вычитание: сравниваем только даты (date), чтобы избежать багов с часами
+    days_left = (expiry_dt.date() - date.today()).days
     article_text = f"\nАртикул: <code>{data['article']}</code>" if data.get("article") else ""
 
     await message.answer(
