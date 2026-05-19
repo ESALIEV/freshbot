@@ -101,17 +101,18 @@ async def show_products_page(message: Message, store_id: int, page: int = 0, sea
         await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
     nav = InlineKeyboardBuilder()
-    if page > 0:
-        nav.button(text="⬅️ Назад", callback_data=f"page:{page-1}:{store_id}:{search}")
-    if end < total:
-        nav.button(text="➡️ Вперёд", callback_data=f"page:{page+1}:{store_id}:{search}")
-    nav.button(text="🔍 Поиск", callback_data=f"search_start:{store_id}")
-    nav.adjust(2)
-    await message.answer(
-        f"_{page + 1} из {total_pages} страниц_",
-        reply_markup=nav.as_markup(),
-        parse_mode="Markdown"
-    )
+if page > 0:
+    nav.button(text="⬅️ Назад", callback_data=f"page:{page-1}:{store_id}:{search}")
+if end < total:
+    nav.button(text="➡️ Вперёд", callback_data=f"page:{page+1}:{store_id}:{search}")
+nav.button(text="🔍 Поиск", callback_data=f"search_start:{store_id}")
+nav.button(text="📄 Перейти на стр.", callback_data=f"goto_page:{store_id}:{search}")
+nav.adjust(2)
+await message.answer(
+    f"_{page + 1} из {total_pages} страниц_",
+    reply_markup=nav.as_markup(),
+    parse_mode="Markdown"
+)
 
 
 class AddProductState(StatesGroup):
@@ -185,7 +186,45 @@ async def cb_page(callback: CallbackQuery, state: FSMContext):
 
     await show_products_page(callback.message, store_id, page=page, search=search)
     await callback.answer()
+class GotoPageState(StatesGroup):
+    waiting_for_page = State()
 
+
+@router.callback_query(F.data.startswith("goto_page:"))
+async def cb_goto_page(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":", 2)
+    store_id = int(parts[1])
+    search = parts[2] if len(parts) > 2 else ""
+    await state.update_data(store_id=store_id, search=search)
+    await state.set_state(GotoPageState.waiting_for_page)
+    await callback.message.answer("📄 Введите номер страницы:")
+    await callback.answer()
+
+
+@router.message(GotoPageState.waiting_for_page)
+async def process_goto_page(message: Message, state: FSMContext):
+    try:
+        page = int(message.text.strip()) - 1
+        if page < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите корректный номер страницы:")
+        return
+
+    data = await state.get_data()
+    store_id = data.get("store_id")
+    search = data.get("search", "")
+    await state.clear()
+
+    products = await get_store_products(store_id, search)
+    total_pages = (len(products) + PAGE_SIZE - 1) // PAGE_SIZE
+
+    if page >= total_pages:
+        await message.answer(f"❌ Страницы {page + 1} не существует. Всего страниц: {total_pages}")
+        return
+
+    await state.update_data(store_id=store_id)
+    await show_products_page(message, store_id, page=page, search=search)
 
 # ──── ПОИСК ────
 
