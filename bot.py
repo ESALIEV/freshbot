@@ -64,7 +64,6 @@ async def main():
     finally:
         scheduler.shutdown()
         await bot.session.close()
-        await close_db()
 
 
 if __name__ == "__main__":
