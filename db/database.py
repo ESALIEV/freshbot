@@ -206,10 +206,10 @@ async def update_batch(batch_id: int, quantity: int, expiry_date: str):
     await create_notifications_for_batch(batch_id, expiry_date)
 
 
-async def update_product_name(product_id: int, name: str):
+async def update_product_article(product_id: int, article: str):
     pool = await get_pool()
     async with pool.acquire() as db:
-        await db.execute("UPDATE products SET name = $1 WHERE id = $2", name, product_id)
+        await db.execute("UPDATE products SET article = $1 WHERE id = $2", article, product_id)
 
 
 async def delete_batch(batch_id: int):
@@ -249,6 +249,7 @@ async def get_pending_notifications() -> list:
             SELECT n.id, n.type, n.batch_id,
                    b.quantity, b.expiry_date,
                    p.name as product_name,
+                   p.article as product_article,
                    s.id as store_id
             FROM notifications n
             JOIN batches b ON b.id = n.batch_id
