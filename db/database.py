@@ -138,6 +138,8 @@ async def get_store_members(store_id: int) -> list:
 
 
 async def add_product_batch(store_id: int, name: str, quantity: int, expiry_date: str, article: str = "") -> int:
+    from datetime import date as date_type
+    expiry = date_type.fromisoformat(expiry_date)
     pool = await get_pool()
     async with pool.acquire() as db:
         product = await db.fetchrow(
@@ -146,7 +148,7 @@ async def add_product_batch(store_id: int, name: str, quantity: int, expiry_date
         )
         batch = await db.fetchrow(
             "INSERT INTO batches (product_id, quantity, expiry_date) VALUES ($1, $2, $3) RETURNING *",
-            product["id"], quantity, expiry_date
+            product["id"], quantity, expiry
         )
         return batch["id"]
 
