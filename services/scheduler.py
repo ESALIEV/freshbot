@@ -16,21 +16,26 @@ NOTIF_TEMPLATES = {
 
 async def send_notifications(bot: Bot):
     notifications = await get_pending_notifications()
-    
+
     logger.info(f"Checking notifications... Found: {len(notifications)}")
-    
+
     if not notifications:
         return
 
     for notif in notifications:
         emoji, status_text = NOTIF_TEMPLATES.get(notif["type"], ("📢", "срок годности"))
+
+        article_text = f"\nАртикул: <code>{notif['product_article']}</code>" if notif.get("product_article") else ""
+
         text = (
-            f"{emoji} <b>{notif['product_name']}</b> — {status_text}\n"
+            f"{emoji} <b>{notif['product_name']}</b>{article_text} — {status_text}\n"
             f"Срок: {notif['expiry_date']}\n"
             f"Количество: {notif['quantity']} шт."
         )
+
         members = await get_store_members(notif["store_id"])
         logger.info(f"Sending notification type={notif['type']} to {len(members)} members")
+
         for member in members:
             try:
                 await bot.send_message(
@@ -41,13 +46,13 @@ async def send_notifications(bot: Bot):
                 logger.info(f"Sent to {member['telegram_id']}")
             except Exception as e:
                 logger.warning(f"Failed to send to {member['telegram_id']}: {e}")
+
         await mark_notification_sent(notif["id"])
 
 
 async def start_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
-    
-    # Проверяем уведомления каждый час
+
     scheduler.add_job(
         send_notifications,
         trigger="interval",
@@ -55,14 +60,13 @@ async def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         kwargs={"bot": bot},
         id="check_notifications"
     )
-    
-    # И сразу при старте
+
     scheduler.add_job(
         send_notifications,
         trigger="date",
         kwargs={"bot": bot},
         id="check_on_start"
     )
-    
+
     scheduler.start()
     return scheduler
