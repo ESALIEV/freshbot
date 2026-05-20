@@ -14,6 +14,8 @@ class JoinStoreState(StatesGroup):
     waiting_for_code = State()
 
 
+from db.database import get_or_create_user, get_user_stores, use_invite_code, get_store_stats  # добавить get_store_stats
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -22,33 +24,34 @@ async def cmd_start(message: Message, state: FSMContext):
         username=message.from_user.username
     )
     stores = await get_user_stores(user["id"])
-    name = message.from_user.first_name
 
-    if not stores:
-        text = (
-            f"🌿 <b>Добро пожаловать в FreshBot!</b>\n\n"
-            f"Привет, <b>{name}</b>! 👋\n\n"
-            f"Я помогу вам контролировать сроки годности товаров "
-            f"и никогда не забывать о просроченной продукции.\n\n"
-            f"<b>Что я умею:</b>\n"
-            f"📦 Вести список товаров с датами\n"
-            f"🔔 Напоминать за 3 дня, 1 день и в день истечения\n"
-            f"👥 Работать с командой сотрудников\n"
-            f"📊 Показывать статистику и экспортировать отчёты\n\n"
-            f"<b>Чтобы начать:</b>\n"
-            f"➡️ Создайте свой магазин — кнопка ниже\n"
-            f"➡️ Или войдите по invite-коду от администратора"
-        )
-    else:
-        text = (
-            f"🌿 <b>FreshBot</b>\n\n"
-            f"С возвращением, <b>{name}</b>! 👋\n\n"
-        )
-        text += f"🏪 Ваши магазины ({len(stores)}):\n"
+    text = (
+        "🌿 <b>FreshBot</b> — контроль сроков годности\n\n"
+        f"Привет, <b>{message.from_user.first_name}</b>!\n"
+    )
+
+    if stores:
+        text += f"Ваши магазины ({len(stores)}):\n"
         for s in stores:
-            role_emoji = "👑" if s["role"] == "admin" else "👷"
-            text += f"  {role_emoji} {s['name']}\n"
-        text += "\nВыберите действие в меню ниже 👇"
+            text += f"  • {s['name']} [{s['role']}]\n"
+
+        # Напоминание о просроченных
+        warnings = []
+        for s in stores:
+            stats = await get_store_stats(s["id"])
+            expired = stats.get("expired") or 0
+            expires_3d = stats.get("expires_3d") or 0
+            if expired:
+                warnings.append(f"❌ <b>{s['name']}</b>: {expired} просрочено")
+            if expires_3d:
+                warnings.append(f"⚠️ <b>{s['name']}</b>: {expires_3d} истекают в ближайшие 3 дня")
+
+        if warnings:
+            text += "\n⚠️ <b>Внимание:</b>\n" + "\n".join(warnings) + "\n"
+
+        text += "\nВыберите действие:"
+    else:
+        text += "У вас пока нет магазинов. Создайте первый или присоединитесь по коду."
 
     await message.answer(text, reply_markup=main_menu_kb(stores), parse_mode="HTML")
 
