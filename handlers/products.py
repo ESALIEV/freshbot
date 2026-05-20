@@ -117,6 +117,7 @@ async def show_products_page(message: Message, store_id: int, page: int = 0, sea
 class AddProductState(StatesGroup):
     waiting_for_name = State()
     waiting_for_article = State()
+    waiting_for_category = State()
     waiting_for_expiry = State()
     waiting_for_qty = State()
 
@@ -517,8 +518,64 @@ async def cb_skip_article(callback: CallbackQuery, state: FSMContext):
 @router.message(AddProductState.waiting_for_article)
 async def process_article(message: Message, state: FSMContext):
     await state.update_data(article=message.text.strip())
+    await _ask_category(message, state)
+
+
+@router.callback_query(F.data == "skip_article")
+async def cb_skip_article(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(article="")
+    await _ask_category(callback.message, state)
+    await callback.answer()
+
+
+async def _ask_category(message: Message, state: FSMContext):
+    data = await state.get_data()
+    store_id = data.get("store_id")
+
+    # Берём существующие категории магазина
+    from db.database import get_store_categories
+    categories = await get_store_categories(store_id)
+
+    builder = InlineKeyboardBuilder()
+    for cat in categories:
+        builder.button(text=cat, callback_data=f"set_category:{cat}")
+    builder.button(text="✏️ Своя категория", callback_data="custom_category")
+    builder.button(text="⏭️ Без категории",  callback_data="skip_category")
+    builder.adjust(2)
+
+    await state.set_state(AddProductState.waiting_for_category)
+    await message.answer("📂 Выберите категорию товара:", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("set_category:"))
+async def cb_set_category(callback: CallbackQuery, state: FSMContext):
+    category = callback.data.split(":", 1)[1]
+    await state.update_data(category=category)
+    await state.set_state(AddProductState.waiting_for_expiry)
+    await callback.message.edit_text("📅 Введите срок годности в формате ДД.ММ.ГГГГ\nНапример: 15.06.2025")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "custom_category")
+async def cb_custom_category(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("✏️ Введите название категории:")
+    await callback.answer()
+    # Остаёмся в waiting_for_category, следующее сообщение — текст категории
+
+
+@router.message(AddProductState.waiting_for_category)
+async def process_custom_category(message: Message, state: FSMContext):
+    await state.update_data(category=message.text.strip())
     await state.set_state(AddProductState.waiting_for_expiry)
     await message.answer("📅 Введите срок годности в формате ДД.ММ.ГГГГ\nНапример: 15.06.2025")
+
+
+@router.callback_query(F.data == "skip_category")
+async def cb_skip_category(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(category="Общее")
+    await state.set_state(AddProductState.waiting_for_expiry)
+    await callback.message.edit_text("📅 Введите срок годности в формате ДД.ММ.ГГГГ\nНапример: 15.06.2025")
+    await callback.answer()
 
 
 @router.message(AddProductState.waiting_for_expiry)
