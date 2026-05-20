@@ -386,3 +386,218 @@ async def cb_leave_confirm(callback: CallbackQuery):
 async def cb_leave_cancel(callback: CallbackQuery):
     await callback.message.edit_text("❌ Отменено.")
     await callback.answer()
+
+from db.database import remove_store_member, leave_store, rename_store  # добавить в импорты вверху
+
+# ──── ПЕРЕИМЕНОВАНИЕ ────
+
+class RenameStoreState(StatesGroup):
+    waiting_for_new_name = State()
+
+
+@router.message(Command("renamstore"))
+async def cmd_rename_store(message: Message, state: FSMContext):
+    user = await get_or_create_user(message.from_user.id)
+    stores = await get_user_stores(user["id"])
+    admin_stores = [s for s in stores if s["role"] == "admin"]
+
+    if not admin_stores:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+
+    if len(admin_stores) == 1:
+        await state.update_data(rename_store_id=admin_stores[0]["id"],
+                                rename_store_name=admin_stores[0]["name"])
+        await state.set_state(RenameStoreState.waiting_for_new_name)
+        await message.answer(f"✏️ Новое название для <b>{admin_stores[0]['name']}</b>:",
+                             parse_mode="HTML")
+    else:
+        builder = InlineKeyboardBuilder()
+        for s in admin_stores:
+            builder.button(text=f"🏪 {s['name']}", callback_data=f"rename_store:{s['id']}")
+        builder.adjust(1)
+        await message.answer("Какой магазин переименовать?", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("rename_store:"))
+async def cb_rename_store(callback: CallbackQuery, state: FSMContext):
+    store_id = int(callback.data.split(":")[1])
+    user = await get_or_create_user(callback.from_user.id)
+    if await get_member_role(user["id"], store_id) != "admin":
+        await callback.answer("❌ Нет прав", show_alert=True)
+        return
+    stores = await get_user_stores(user["id"])
+    store = next((s for s in stores if s["id"] == store_id), None)
+    await state.update_data(rename_store_id=store_id, rename_store_name=store["name"] if store else "")
+    await state.set_state(RenameStoreState.waiting_for_new_name)
+    await callback.message.edit_text(f"✏️ Новое название для <b>{store['name']}</b>:", parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(RenameStoreState.waiting_for_new_name)
+async def process_rename_store(message: Message, state: FSMContext):
+    new_name = message.text.strip()
+    if len(new_name) < 2:
+        await message.answer("❌ Слишком короткое. Попробуйте снова:")
+        return
+    data = await state.get_data()
+    await rename_store(data["rename_store_id"], new_name)
+    await state.clear()
+    await message.answer(f"✅ Магазин переименован в <b>{new_name}</b>!", parse_mode="HTML")
+
+
+# ──── УДАЛЕНИЕ УЧАСТНИКА ────
+
+@router.message(Command("kick"))
+async def cmd_kick(message: Message):
+    user = await get_or_create_user(message.from_user.id)
+    stores = await get_user_stores(user["id"])
+    admin_stores = [s for s in stores if s["role"] == "admin"]
+
+    if not admin_stores:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+
+    store_id = admin_stores[0]["id"]
+    members = await get_store_members(store_id)
+    # Показываем всех кроме себя
+    others = [m for m in members if m["telegram_id"] != message.from_user.id]
+
+    if not others:
+        await message.answer("В магазине нет других участников.")
+        return
+
+    builder = InlineKeyboardBuilder()
+    for m in others:
+        name = f"@{m['username']}" if m["username"] else f"ID {m['telegram_id']}"
+        emoji = "👑" if m["role"] == "admin" else "👷"
+        builder.button(
+            text=f"{emoji} {name}",
+            callback_data=f"kick_confirm:{store_id}:{m['telegram_id']}"
+        )
+    builder.adjust(1)
+    await message.answer("👤 Кого исключить из магазина?", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("kick_confirm:"))
+async def cb_kick_confirm(callback: CallbackQuery):
+    _, store_id_str, target_tg_id_str = callback.data.split(":")
+    store_id = int(store_id_str)
+    target_tg_id = int(target_tg_id_str)
+
+    user = await get_or_create_user(callback.from_user.id)
+    if await get_member_role(user["id"], store_id) != "admin":
+        await callback.answer("❌ Нет прав", show_alert=True)
+        return
+
+    members = await get_store_members(store_id)
+    target = next((m for m in members if m["telegram_id"] == target_tg_id), None)
+    if not target:
+        await callback.answer("Участник не найден", show_alert=True)
+        return
+
+    name = f"@{target['username']}" if target["username"] else f"ID {target_tg_id}"
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, исключить", callback_data=f"kick_do:{store_id}:{target_tg_id}")
+    builder.button(text="❌ Отмена",        callback_data="kick_cancel")
+    builder.adjust(2)
+    await callback.message.edit_text(
+        f"Исключить <b>{name}</b> из магазина?",
+        reply_markup=builder.as_markup(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("kick_do:"))
+async def cb_kick_do(callback: CallbackQuery):
+    _, store_id_str, target_tg_id_str = callback.data.split(":")
+    store_id = int(store_id_str)
+    target_tg_id = int(target_tg_id_str)
+
+    user = await get_or_create_user(callback.from_user.id)
+    if await get_member_role(user["id"], store_id) != "admin":
+        await callback.answer("❌ Нет прав", show_alert=True)
+        return
+
+    # Найти user.id по telegram_id
+    from db.database import get_or_create_user as goc
+    target_user = await goc(target_tg_id)
+    await remove_store_member(target_user["id"], store_id)
+
+    members = await get_store_members(store_id)
+    target_name = f"@{next((m['username'] for m in members if m['telegram_id'] == target_tg_id), None) or target_tg_id}"
+    await callback.message.edit_text(f"✅ Участник исключён.")
+    await callback.answer("Готово!")
+
+    # Уведомить исключённого
+    try:
+        await callback.bot.send_message(
+            target_tg_id,
+            "❌ Вас исключили из магазина."
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "kick_cancel")
+async def cb_kick_cancel(callback: CallbackQuery):
+    await callback.message.edit_text("❌ Отменено.")
+    await callback.answer()
+
+
+# ──── ВЫХОД ИЗ МАГАЗИНА ────
+
+@router.message(Command("leave"))
+async def cmd_leave(message: Message):
+    user = await get_or_create_user(message.from_user.id)
+    stores = await get_user_stores(user["id"])
+
+    if not stores:
+        await message.answer("У вас нет магазинов.")
+        return
+
+    if len(stores) == 1:
+        store = stores[0]
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Да, выйти",  callback_data=f"leave_confirm:{store['id']}")
+        builder.button(text="❌ Отмена",      callback_data="leave_cancel")
+        builder.adjust(2)
+        await message.answer(
+            f"Выйти из магазина <b>{store['name']}</b>?",
+            reply_markup=builder.as_markup(), parse_mode="HTML"
+        )
+    else:
+        builder = InlineKeyboardBuilder()
+        for s in stores:
+            builder.button(text=f"🏪 {s['name']}", callback_data=f"leave_confirm:{s['id']}")
+        builder.adjust(1)
+        await message.answer("Из какого магазина выйти?", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("leave_confirm:"))
+async def cb_leave_confirm(callback: CallbackQuery):
+    store_id = int(callback.data.split(":")[1])
+    user = await get_or_create_user(callback.from_user.id)
+    success = await leave_store(user["id"], store_id)
+
+    if success:
+        stores = await get_user_stores(user["id"])
+        from keyboards.main import main_menu_kb
+        await callback.message.edit_text("✅ Вы вышли из магазина.")
+        await callback.bot.send_message(
+            callback.from_user.id,
+            "Выберите действие:",
+            reply_markup=main_menu_kb(stores)
+        )
+    else:
+        await callback.message.edit_text(
+            "❌ Нельзя выйти — вы единственный администратор.\n"
+            "Назначьте другого админа или удалите магазин."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "leave_cancel")
+async def cb_leave_cancel(callback: CallbackQuery):
+    await callback.message.edit_text("❌ Отменено.")
+    await callback.answer()
