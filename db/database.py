@@ -139,20 +139,22 @@ async def get_store_members(store_id: int) -> list:
         return [dict(r) for r in rows]
 
 
-async def add_product_batch(store_id: int, name: str, quantity: int, expiry_date: str, article: str = "") -> int:
-    from datetime import date as date_type
-    expiry = date_type.fromisoformat(expiry_date)
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        product = await db.fetchrow(
-            "INSERT INTO products (store_id, name, article) VALUES ($1, $2, $3) RETURNING *",
-            store_id, name, article
-        )
-        batch = await db.fetchrow(
-            "INSERT INTO batches (product_id, quantity, expiry_date) VALUES ($1, $2, $3) RETURNING *",
-            product["id"], quantity, expiry
-        )
-        return batch["id"]
+async def add_product_batch(store_id: int, name: str, quantity: int,
+                             expiry_date: str, article: str = "",
+                             category: str = "Общее") -> int:
+    db = await get_db()
+    cur = await db.execute(
+        "INSERT INTO products (store_id, name, article, category) VALUES (?, ?, ?, ?)",
+        (store_id, name, article, category)
+    )
+    product_id = cur.lastrowid
+    cur2 = await db.execute(
+        "INSERT INTO batches (product_id, quantity, expiry_date) VALUES (?, ?, ?)",
+        (product_id, quantity, expiry_date)
+    )
+    batch_id = cur2.lastrowid
+    await db.commit()
+    return batch_id
 
 
 async def get_store_products(store_id: int, search: str = "") -> list:
