@@ -610,12 +610,13 @@ async def process_quantity(message: Message, state: FSMContext):
     await state.clear()
 
     batch_id = await add_product_batch(
-        store_id=data["store_id"],
-        name=data["product_name"],
-        quantity=qty,
-        expiry_date=data["expiry_date"],
-        article=data.get("article", "")
-    )
+    store_id=data["store_id"],
+    name=data["product_name"],
+    quantity=qty,
+    expiry_date=data["expiry_date"],
+    article=data.get("article", ""),
+    category=data.get("category", "Общее"),   # ← добавить
+)
 
     await create_notifications_for_batch(batch_id, data["expiry_date"])
 
