@@ -373,3 +373,65 @@ async def update_product_article(product_id: int, article: str):
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute("UPDATE products SET article = $1 WHERE id = $2", article, product_id)
+
+# ──── КАТЕГОРИИ ────
+
+async def get_store_categories(store_id: int) -> list[str]:
+    db = await get_db()
+    async with db.execute(
+        "SELECT DISTINCT category FROM products WHERE store_id = ? AND category != '' ORDER BY category",
+        (store_id,)
+    ) as cur:
+        rows = await cur.fetchall()
+        return [r[0] for r in rows]
+
+
+async def update_product_category(product_id: int, category: str):
+    db = await get_db()
+    await db.execute("UPDATE products SET category = ? WHERE id = ?", (category, product_id))
+    await db.commit()
+
+
+# ──── УПРАВЛЕНИЕ УЧАСТНИКАМИ ────
+
+async def remove_store_member(user_id: int, store_id: int):
+    db = await get_db()
+    await db.execute(
+        "DELETE FROM store_members WHERE user_id = ? AND store_id = ?",
+        (user_id, store_id)
+    )
+    await db.commit()
+
+
+async def leave_store(user_id: int, store_id: int) -> bool:
+    """Выход участника из магазина. Админ не может выйти если он единственный."""
+    db = await get_db()
+    async with db.execute(
+        "SELECT role FROM store_members WHERE user_id = ? AND store_id = ?",
+        (user_id, store_id)
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return False
+    if row[0] == "admin":
+        async with db.execute(
+            "SELECT COUNT(*) FROM store_members WHERE store_id = ? AND role = 'admin'",
+            (store_id,)
+        ) as cur:
+            count = (await cur.fetchone())[0]
+        if count <= 1:
+            return False  # единственный админ — нельзя выйти
+    await db.execute(
+        "DELETE FROM store_members WHERE user_id = ? AND store_id = ?",
+        (user_id, store_id)
+    )
+    await db.commit()
+    return True
+
+
+# ──── ПЕРЕИМЕНОВАНИЕ МАГАЗИНА ────
+
+async def rename_store(store_id: int, new_name: str):
+    db = await get_db()
+    await db.execute("UPDATE stores SET name = ? WHERE id = ?", (new_name, store_id))
+    await db.commit()
