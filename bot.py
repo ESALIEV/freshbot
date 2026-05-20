@@ -30,6 +30,9 @@ BOT_COMMANDS = [
     BotCommand(command="mystores", description="Мои магазины"),
     BotCommand(command="members",  description="Сотрудники"),
     BotCommand(command="help",     description="Справка"),
+    BotCommand(command="leave",     description="Выйти из магазина"),
+    BotCommand(command="kick",      description="Исключить участника"),
+    BotCommand(command="renamstore", description="Переименовать магазин"),
 ]
 
 
